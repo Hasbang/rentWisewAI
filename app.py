@@ -33,6 +33,20 @@ st.markdown("""
             border-bottom: 2px solid #e0e0e0;
             padding-bottom: 0.5rem;
         }
+        .property-card {
+            background-color: #f8f9fa;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border-left: 5px solid #4CAF50;
+        }
+        .risk-card {
+            background-color: #fff8e1;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border-left: 5px solid #FF9800;
+        }
         .advisory-box {
             background-color: #f0f4ff;
             border-radius: 12px;
@@ -84,7 +98,8 @@ with st.form("search_form"):
             help="How much cash do you have available right now to pay upfront?"
         )
     with col2:
-        currency = st.selectbox("Currency", ["NLE", "USD"])
+        # Currency selector kept as NLE only until conversion is built
+        st.selectbox("Currency", ["NLE"])
 
     col3, col4 = st.columns(2)
     with col3:
@@ -119,12 +134,10 @@ with st.form("search_form"):
 # ── VALIDATION & CREW EXECUTION ──────────────────────────────────
 if submitted:
 
-    # FIX 3: Clear previous results immediately when a new search starts.
-    # This prevents the user from seeing stale results during the new run.
-    if "result" in st.session_state:
-        del st.session_state["result"]
-    if "requirements" in st.session_state:
-        del st.session_state["requirements"]
+    # Clear all previous results when a new search starts
+    for key in ["result", "requirements", "filter_results"]:
+        if key in st.session_state:
+            del st.session_state[key]
 
     # Validate
     errors = []
@@ -138,10 +151,9 @@ if submitted:
             st.error(error)
 
     else:
-        # Package
+        # Package requirements
         requirements = {
             "budget": budget,
-            "currency": currency,
             "location": location.strip(),
             "bedrooms": bedrooms,
             "bathrooms": bathrooms,
@@ -149,20 +161,19 @@ if submitted:
             "notes": notes.strip() or "No additional notes provided.",
         }
 
-        # FIX 2: Multi-stage progress feedback.
-        # The user sees exactly what is happening at each stage.
+        # Multi-stage progress feedback
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         try:
-            status_text.info("🔍 Stage 1 of 3 — Loading property listings...")
+            status_text.info("🔍 Stage 1 of 3 — Loading property listings from database...")
             progress_bar.progress(15)
             time.sleep(0.5)
 
-            status_text.info("🧠 Stage 2 of 3 — Property Analyst is filtering and ranking properties...")
+            status_text.info("🧠 Stage 2 of 3 — Python is filtering and ranking properties...")
             progress_bar.progress(40)
 
-            result = run_rentwise_crew(requirements)
+            result_data = run_rentwise_crew(requirements)
 
             progress_bar.progress(85)
             status_text.info("✍️ Stage 3 of 3 — Rental Advisor is preparing your report...")
@@ -172,9 +183,10 @@ if submitted:
             status_text.empty()
             progress_bar.empty()
 
-            # Store in session state
-            st.session_state["result"] = result
+            # Store all results in session state
+            st.session_state["result"] = result_data["result"]
             st.session_state["requirements"] = requirements
+            st.session_state["filter_results"] = result_data["filter_results"]
             st.success("✅ Analysis complete! Your report is ready below.")
 
         except Exception as e:
@@ -188,56 +200,76 @@ if submitted:
 
 
 # ── RESULTS DISPLAY ──────────────────────────────────────────────
-if "result" in st.session_state:
+if "result" in st.session_state and "filter_results" in st.session_state:
     result = st.session_state["result"]
     requirements = st.session_state["requirements"]
+    filter_results = st.session_state["filter_results"]
 
-    # FIX 4: Search summary metrics — scannable at a glance
+    shortlist = filter_results["shortlist"]
+    rejected = filter_results["rejected"]
+
+    # Search summary metrics
     st.markdown('<div class="section-header">📊 Search Summary</div>',
                 unsafe_allow_html=True)
 
     col_a, col_b, col_c, col_d = st.columns(4)
-    col_a.metric("Your Budget", f"{requirements['currency']} {requirements['budget']:,}")
-    col_b.metric("Bedrooms", requirements["bedrooms"])
-    col_c.metric("Property Type", requirements["property_type"].title())
-    col_d.metric("Location", requirements["location"])
+    col_a.metric("Your Budget", f"NLE {requirements['budget']:,}")
+    col_b.metric("Properties Analysed", len(shortlist) + len(rejected))
+    col_c.metric("Shortlisted", len(shortlist))
+    col_d.metric("Rejected", len(rejected))
 
-    if requirements["notes"] != "No additional notes provided.":
+    if requirements.get("notes") != "No additional notes provided.":
         st.caption(f"📝 Notes: {requirements['notes']}")
 
     st.divider()
 
-    # FIX 2: Detect no-results scenario and show helpful guidance
-    no_results_signals = [
-        "no properties",
-        "no affordable",
-        "no suitable",
-        "no available",
-        "none of the properties",
-        "could not find",
-    ]
-
-    result_lower = result.lower()
-    no_results = any(signal in result_lower for signal in no_results_signals)
-
-    if no_results:
-        # Show a structured no-results message with actionable suggestions
-        st.markdown('<div class="section-header">⚠️ No Matching Properties Found</div>',
+    # Property cards built from Python data — reliable, not from LLM output
+    if shortlist:
+        st.markdown('<div class="section-header">🏠 Shortlisted Properties</div>',
                     unsafe_allow_html=True)
+
+        for prop in shortlist:
+            risk_label = "⚠️ High Upfront Capital Risk" if prop["highRisk"] else "✅ Financially Safe"
+            card_style = "risk-card" if prop["highRisk"] else "property-card"
+
+            st.markdown(f"""
+            <div class="{card_style}">
+                <h4>{prop['title']}</h4>
+                <p>📍 {prop['location']} &nbsp;|&nbsp;
+                   🛏 {prop['bedrooms']} bed &nbsp;|&nbsp;
+                   🚿 {prop['bathrooms']} bath &nbsp;|&nbsp;
+                   🏠 {prop['propertyType'].title()}</p>
+                <p>💰 Yearly Rent: <strong>NLE {prop['yearlyRent']:,}</strong>
+                   &nbsp;|&nbsp;
+                   Move-in Cost: <strong>NLE {prop['moveInCost']:,}</strong></p>
+                <p>Remaining Cash: <strong>NLE {prop['remainingCash']:,}</strong>
+                   &nbsp;|&nbsp; {risk_label}</p>
+                <p>🚗 Parking: {'Yes' if prop['parking'] else 'No'}
+                   &nbsp;|&nbsp;
+                   🛋 Furnished: {'Yes' if prop['furnished'] else 'No'}
+                   &nbsp;|&nbsp;
+                   💧 Water: {prop['waterSupply']}
+                   &nbsp;|&nbsp;
+                   ⚡ Electricity: {prop['electricity']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+    else:
         st.markdown("""
         <div class="no-results-box">
-            <h4>Here's what you can try:</h4>
+            <h4>⚠️ No matching properties found</h4>
             <ul>
                 <li>💰 <strong>Increase your budget</strong> — some properties require 2 years advance</li>
-                <li>📍 <strong>Broaden your location</strong> — try nearby areas like Wilberforce or Congo Cross</li>
+                <li>📍 <strong>Broaden your location</strong> — try nearby areas</li>
                 <li>🛏️ <strong>Reduce bedroom count</strong> — fewer bedrooms means lower advance costs</li>
                 <li>🏠 <strong>Change property type</strong> — try "any" to see all available types</li>
             </ul>
-            <p>The AI's full analysis is below to help you understand why properties were rejected.</p>
         </div>
         """, unsafe_allow_html=True)
 
-    # Always show the full advisory report
+    st.divider()
+
+    # Full AI advisory report
     st.markdown('<div class="section-header">📋 AI Advisory Report</div>',
                 unsafe_allow_html=True)
     st.markdown('<div class="advisory-box">', unsafe_allow_html=True)

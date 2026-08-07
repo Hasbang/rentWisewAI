@@ -3,26 +3,43 @@
 from crewai import Task
 
 
-def create_analysis_task(agent, properties: list, requirements: dict):
+def create_analysis_task(agent, filter_results: dict, requirements: dict):
     """
-    Creates the property analysis task for the Property Analyst agent.
+    Creates the analysis task. Now receives pre-filtered results
+    from Python rather than raw properties.
 
     Args:
         agent: The Property Analyst agent instance.
-        properties: The full list of property dictionaries from JSON.
-        requirements: The renter's requirements as a dictionary.
+        filter_results: Output from filter_and_rank_properties()
+        requirements: The renter's requirements dictionary.
     """
+    shortlist = filter_results["shortlist"]
+    rejected = filter_results["rejected"]
 
-    # Format properties into readable text for the prompt
-    properties_text = ""
-    for p in properties:
-        properties_text += f"""
+    # Format rejected properties
+    rejected_text = ""
+    for p in rejected:
+        rejected_text += f"""
+- {p['title']} ({p['location']})
+  Move-in Cost: NLE {p['moveInCost']:,}
+  Reason Rejected: {p['rejectionReason']}
+"""
+
+    # Format shortlisted properties
+    shortlist_text = ""
+    if shortlist:
+        for i, p in enumerate(shortlist, 1):
+            risk_flag = "⚠ HIGH UPFRONT CAPITAL RISK" if p["highRisk"] else "✅ Financially Safe"
+            shortlist_text += f"""
+Rank #{i} (Match Score: {p['matchScore']}/100)
 Property ID: {p['id']}
 Title: {p['title']}
 Location: {p['location']}
 Yearly Rent: NLE {p['yearlyRent']:,}
 Advance Required: {p['advanceRequired']} year(s)
-Move-in Cost: NLE {p['yearlyRent'] * p['advanceRequired']:,}
+Move-in Cost: NLE {p['moveInCost']:,}
+Remaining Cash After Move-in: NLE {p['remainingCash']:,}
+Financial Risk: {risk_flag}
 Bedrooms: {p['bedrooms']}
 Bathrooms: {p['bathrooms']}
 Type: {p['propertyType']}
@@ -32,56 +49,43 @@ Water Supply: {p['waterSupply']}
 Electricity: {p['electricity']}
 Description: {p['description']}
 ---"""
+    else:
+        shortlist_text = "No affordable properties found that match the renter's requirements."
 
     return Task(
         description=f"""
-You are analyzing rental properties for a renter with the following requirements:
+You are a Property Analyst reviewing the results of a financial screening
+already completed by our system.
 
 RENTER REQUIREMENTS:
-- Cash Available Today: NLE {requirements['budget']:,}
-- Preferred Location: {requirements['location']}
-- Bedrooms Needed: {requirements['bedrooms']}
-- Bathrooms Needed: {requirements['bathrooms']}
+- Budget: NLE {requirements['budget']:,}
+- Location: {requirements['location']}
+- Bedrooms: {requirements['bedrooms']}
+- Bathrooms: {requirements['bathrooms']}
 - Property Type: {requirements['property_type']}
-- Additional Notes: {requirements['notes']}
+- Notes: {requirements['notes']}
 
-AVAILABLE PROPERTIES:
-{properties_text}
+PROPERTIES REJECTED BY THE SYSTEM (do not reconsider these):
+{rejected_text if rejected_text else "None"}
+
+SHORTLISTED PROPERTIES (pre-ranked by match score):
+{shortlist_text}
 
 YOUR INSTRUCTIONS:
+The financial filtering and ranking has already been done.
+Do NOT recalculate costs or change the ranking order.
 
-Step 1 — Financial Filtering:
-For each property, calculate: Move-in Cost = yearlyRent × advanceRequired
-If Move-in Cost > renter's available cash, REJECT the property.
-Clearly state which properties are rejected and why.
-
-Step 2 — Risk Flagging:
-For each affordable property, calculate: Remaining Cash = budget - Move-in Cost
-If Remaining Cash < 10% of the original budget, flag it as HIGH UPFRONT CAPITAL RISK.
-
-Step 3 — Preference Matching:
-From the affordable properties, assess how well each matches:
-- Location preference
-- Number of bedrooms
-- Number of bathrooms
-- Property type
-- Notes and special requirements
-
-Step 4 — Ranking:
-Rank the affordable properties from best match to worst match.
-Give each a brief reason for its ranking position.
-
-OUTPUT FORMAT:
-Return a structured summary that includes:
-1. Rejected properties (with reason)
-2. Affordable properties ranked by match quality
-3. Risk flags where applicable
-4. A brief note on each property's strengths and weaknesses
+Your job is to:
+1. Briefly confirm what the system found (how many rejected, how many shortlisted)
+2. For each shortlisted property, explain WHY it scored well or poorly
+3. For any HIGH UPFRONT CAPITAL RISK property, explain what that means practically
+4. Note any strengths or weaknesses not captured by the score
+5. Pass this analysis to the Rental Advisor
 """,
         expected_output=(
-            "A structured analysis listing rejected properties with reasons, "
-            "followed by affordable properties ranked by match quality, "
-            "with risk flags and brief notes on each property's fit."
+            "A clear summary of the screening results with explanations "
+            "of why each shortlisted property ranked where it did, "
+            "including practical notes on any risk flags."
         ),
         agent=agent,
     )
