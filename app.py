@@ -90,13 +90,13 @@ with st.form("search_form"):
     col1, col2 = st.columns([2, 1])
     with col1:
         budget = st.number_input(
-            "Total Cash Available Today (NLE)",
-            min_value=1000,
-            max_value=10000000,
-            value=80000,
-            step=1000,
-            help="How much cash do you have available right now to pay upfront?"
-        )
+    "Cash Budgeted for Housing (NLE)",
+    min_value=1000,
+    max_value=10000000,
+    value=80000,
+    step=1000,
+    help="Enter the amount you have set aside specifically for advance rent and moving costs — not your total savings."
+)
     with col2:
         # Currency selector kept as NLE only until conversion is built
         st.selectbox("Currency", ["NLE"])
