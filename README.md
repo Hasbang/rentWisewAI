@@ -10,7 +10,7 @@ This is **not** a rental marketplace. It is a **decision support system** built 
 
 ## 📸 Preview
 
-![RentWise AI Screenshot](screenshot.png)
+![RentWise AI Screenshot](screenshot.png) - // not added yet
 
 ---
 
@@ -18,7 +18,7 @@ This is **not** a rental marketplace. It is a **decision support system** built 
 
 A renter enters their requirements:
 
-- Total cash available today (NLE or USD)
+- Total cash available today (NLE)
 - Preferred location in Freetown
 - Number of bedrooms and bathrooms
 - Property type
@@ -28,14 +28,16 @@ Two AI agents then go to work:
 
 | Agent | Role |
 |---|---|
-| **Property Analyst** | Filters properties by affordability, calculates move-in costs, flags financial risks, ranks matches |
-| **Rental Advisor** | Explains why each property does or doesn't suit the renter, gives a clear final recommendation |
+| **Property Analyst** | Receives pre-filtered results from Python, explains why each property ranked where it did, highlights risk flags |
+| **Rental Advisor** | Advises the renter in plain language, explains trade-offs, gives a clear final recommendation |
 
 The system explains **why** each recommendation was made — not just what is available.
 
 ---
 
 ## 🧠 Core Logic
+
+All financial logic runs in deterministic Python — not inside LLM prompts.
 
 **Move-in Cost Calculation:**
 ```
@@ -44,13 +46,28 @@ Move-in Cost = Yearly Rent × Advance Required (years)
 
 In Sierra Leone, landlords typically require 1–2 years of rent paid upfront. RentWise AI accounts for this reality in every recommendation.
 
+**Affordability Filter:**
+```
+Property is affordable if: Move-in Cost <= Budget
+```
+
 **Risk Flagging:**
 ```
 Remaining Cash = Budget - Move-in Cost
 If Remaining Cash < 10% of Budget → ⚠ HIGH UPFRONT CAPITAL RISK
 ```
 
-Any property that leaves the renter with less than 10% of their original cash is flagged as a financial risk.
+**Match Scoring:**
+```
+Location match:       +40 points
+Property type match:  +20 points
+Bathroom match:       +15 points
+Bedroom exact match:  +15 points
+Parking available:    +5 points
+Furnished:            +5 points
+```
+
+Properties are ranked by match score before being passed to the AI agents. The agents explain and advise — they do not calculate.
 
 ---
 
@@ -62,7 +79,7 @@ Any property that leaves the renter with less than 10% of their original cash is
 | Frontend | Streamlit |
 | AI Framework | CrewAI |
 | LLM | OpenAI GPT-4o-mini via OpenRouter |
-| Data Storage | Local JSON (MVP) |
+| Database | Supabase (PostgreSQL) |
 
 ---
 
@@ -71,29 +88,27 @@ Any property that leaves the renter with less than 10% of their original cash is
 ```
 rentwise-ai/
 │
-├── app.py                    # Streamlit web interface
+├── app.py                      # Streamlit web interface
 │
 ├── agents/
-│   ├── property_analyst.py   # Agent 1 — filters and ranks properties
-│   └── rental_advisor.py     # Agent 2 — advises and recommends
+│   ├── property_analyst.py     # Agent 1 — explains ranked results
+│   └── rental_advisor.py       # Agent 2 — advises and recommends
 │
 ├── tasks/
-│   ├── analysis_task.py      # Task for Agent 1
-│   └── advisory_task.py      # Task for Agent 2
+│   ├── analysis_task.py        # Task for Agent 1
+│   └── advisory_task.py        # Task for Agent 2
 │
 ├── crew/
-│   └── rentwise_crew.py      # Assembles agents and runs the crew
-│
-├── data/
-│   └── properties.json       # Rental listings (MVP data)
+│   └── rentwise_crew.py        # Assembles agents and runs the crew
 │
 ├── utils/
-│   └── data_loader.py        # Reads and returns property data
+│   ├── data_loader.py          # Fetches properties from Supabase
+│   └── property_filter.py      # Python financial logic and ranking
 │
 ├── config/
-│   └── settings.py           # API keys and model configuration
+│   └── settings.py             # API keys, model config, startup checks
 │
-├── .env.example              # Environment variable template
+├── .env.example                # Environment variable template
 └── requirements.txt
 ```
 
@@ -140,11 +155,38 @@ Open `.env` and add your credentials:
 OPENROUTER_API_KEY=your-openrouter-api-key-here
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 MODEL_NAME=openai/gpt-4o-mini
+
+SUPABASE_URL=your-supabase-project-url
+SUPABASE_KEY=your-supabase-anon-key
 ```
 
-You can get a free OpenRouter API key at [openrouter.ai](https://openrouter.ai).
+Get a free OpenRouter API key at [openrouter.ai](https://openrouter.ai).  
+Get a free Supabase project at [supabase.com](https://supabase.com).
 
-### 5. Run the app
+### 5. Set up the database
+
+In your Supabase SQL editor, run:
+
+```sql
+CREATE TABLE properties (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    location TEXT NOT NULL,
+    yearly_rent INTEGER NOT NULL,
+    advance_required INTEGER NOT NULL,
+    bedrooms INTEGER NOT NULL,
+    bathrooms INTEGER NOT NULL,
+    property_type TEXT NOT NULL,
+    furnished BOOLEAN DEFAULT FALSE,
+    parking BOOLEAN DEFAULT FALSE,
+    water_supply TEXT,
+    electricity TEXT,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+### 6. Run the app
 
 ```bash
 streamlit run app.py
@@ -154,9 +196,9 @@ Open your browser at `http://localhost:8501`.
 
 ---
 
-## 📊 Sample Property Data
+## 📊 Current Property Listings
 
-The MVP includes 6 sample rental listings in Freetown covering a range of locations, budgets, and property types:
+RentWise AI currently has 6 rental listings in Freetown:
 
 | ID | Property | Location | Yearly Rent | Advance |
 |---|---|---|---|---|
@@ -167,17 +209,22 @@ The MVP includes 6 sample rental listings in Freetown covering a range of locati
 | P005 | 2-Bed Bungalow | Lumley | NLE 42,000 | 2 years |
 | P006 | 1-Bed Studio | Congo Cross | NLE 24,000 | 1 year |
 
-To add more properties, edit `data/properties.json` following the same structure.
+To add more properties, insert rows directly into the Supabase `properties` table — no code changes needed.
 
 ---
 
 ## 🗺️ Roadmap
 
-The MVP uses local JSON for data storage. Planned expansions include:
-
-- [ ] Supabase/PostgreSQL database with pgvector semantic search
-- [ ] User authentication (Firebase)
+- [x] Multi-agent CrewAI system
+- [x] Streamlit web interface
+- [x] Supabase PostgreSQL database
+- [x] Deterministic Python financial logic and match scoring
+- [x] Risk flagging
+- [x] Property cards built from reliable Python data
+- [x] No-results handling with actionable suggestions
+- [x] Startup validation for missing environment variables
 - [ ] Landlord portal for property submissions
+- [ ] User authentication
 - [ ] WhatsApp integration for mobile-first access
 - [ ] Google Maps integration for property locations
 - [ ] Image uploads for listings
@@ -193,9 +240,8 @@ This project is part of an AI engineering portfolio focused on building technolo
 
 ---
 
-
 ## 👤 Author
 
-**Hassan  Bangura ** — AI Engineering Portfolio Project  
+**Hassan Bangura** — AI Engineering Portfolio Project  
 Built for Freetown, Sierra Leone 🇸🇱  
 Powered by CrewAI & OpenRouter
